@@ -1,0 +1,1 @@
+SELECT p.id,d.id,v.id,d.path,d.title,c.content FROM projects p JOIN source_documents d ON d.project_id=p.id JOIN document_revisions v ON v.source_document_id=d.id AND v.is_current JOIN document_chunks c ON c.document_revision_id=v.id WHERE p.slug=$1 AND d.path=$2 AND d.document_kind='plan' AND d.is_current AND d.freshness_status='current' ORDER BY d.last_seen_at DESC LIMIT 1

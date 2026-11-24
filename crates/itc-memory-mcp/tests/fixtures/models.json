@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "local",
+      "kind": "ollama",
+      "base_url": "http://127.0.0.1:11434",
+      "hosted": false
+    }
+  ],
+  "models": [
+    {
+      "id": "test-model",
+      "display_name": "Test model",
+      "provider": "local",
+      "model_identifier": "test:latest",
+      "supported_task_profiles": ["rust-reviewer"],
+      "capabilities": ["chat", "code"],
+      "known_limitations": []
+    }
+  ],
+  "task_profiles": [
+    {
+      "id": "rust-reviewer",
+      "display_name": "Rust reviewer",
+      "responsibility": "Review Rust code",
+      "instructions": "Review the supplied code.",
+      "preferred_model_id": "test-model",
+      "fallback_model_ids": []
+    }
+  ]
+}

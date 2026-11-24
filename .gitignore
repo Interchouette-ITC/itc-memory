@@ -1,0 +1,7 @@
+.env
+/config/
+/postgres/data/
+/postgres/backups/
+
+# Rust build output (introduced in Phase 2).
+/target/

@@ -1,0 +1,1 @@
+SELECT c.title,c.summary,c.next_steps,c.blockers,c.created_at::text,c.task_id::text,c.session_id::text,c.repository_state::text FROM checkpoints c JOIN projects p ON p.id=c.project_id WHERE p.slug=$1 ORDER BY c.created_at DESC LIMIT $2

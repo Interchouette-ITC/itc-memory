@@ -1,0 +1,1 @@
+INSERT INTO model_inference_runs (id, task_profile_id, model_id, provider_id, provider_kind, provider_model_id, hosted, trusted_lan, status, failure_code, fallback_used, latency_ms, input_tokens, output_tokens, estimated_cost_usd) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)

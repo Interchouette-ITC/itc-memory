@@ -1,0 +1,1 @@
+SELECT p.slug,p.display_name,count(DISTINCT r.id)::bigint repositories,count(DISTINCT d.id)::bigint documents FROM projects p LEFT JOIN repositories r ON r.project_id=p.id LEFT JOIN source_documents d ON d.project_id=p.id AND d.is_current AND d.freshness_status='current' GROUP BY p.id ORDER BY p.slug

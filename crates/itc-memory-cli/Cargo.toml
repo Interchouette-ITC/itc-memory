@@ -1,0 +1,26 @@
+[package]
+name = "itc-memory-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "itc-memory"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+itc-memory-core = { path = "../itc-memory-core" }
+itc-memory-db = { path = "../itc-memory-db" }
+itc-memory-index = { path = "../itc-memory-index" }
+itc-memory-model = { path = "../itc-memory-model" }
+sqlx.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

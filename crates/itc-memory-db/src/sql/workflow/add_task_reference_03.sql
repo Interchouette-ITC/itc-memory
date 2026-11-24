@@ -1,0 +1,1 @@
+INSERT INTO task_references (id,task_id,repository_id,reference_kind,reference,title,url) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (task_id,reference_kind,reference) DO UPDATE SET repository_id=COALESCE(EXCLUDED.repository_id,task_references.repository_id),title=COALESCE(EXCLUDED.title,task_references.title),url=COALESCE(EXCLUDED.url,task_references.url)

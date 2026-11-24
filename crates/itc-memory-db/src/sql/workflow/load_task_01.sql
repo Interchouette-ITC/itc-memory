@@ -1,0 +1,1 @@
+SELECT t.id::text,ph.ordinal phase_ordinal,ph.title phase_title,t.title,t.description,t.status,t.checkbox_checked,s.path source_path,t.source_line FROM tasks t LEFT JOIN phases ph ON ph.id=t.phase_id LEFT JOIN source_documents s ON s.id=t.source_document_id WHERE t.id=$1

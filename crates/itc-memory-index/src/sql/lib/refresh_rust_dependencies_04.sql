@@ -1,0 +1,1 @@
+INSERT INTO repository_dependencies (id,repository_location_id,source_document_id,dependency_name,requirement,dependency_kind,target,optional) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (repository_location_id,source_document_id,dependency_name,dependency_kind,target) DO UPDATE SET requirement=EXCLUDED.requirement,optional=EXCLUDED.optional,discovered_at=now()

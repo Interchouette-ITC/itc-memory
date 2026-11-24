@@ -1,0 +1,1 @@
+INSERT INTO repository_changes (id,repository_location_id,path,status_text,is_untracked,last_seen_at) SELECT $1,id,'src/after-checkpoint.rs','??',true,now()+interval '1 second' FROM repository_locations WHERE root_path='/test/migration-test'

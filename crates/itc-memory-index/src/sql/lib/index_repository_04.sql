@@ -1,0 +1,1 @@
+UPDATE source_documents SET is_current=false,freshness_status='stale',duplicate_of_document_id=NULL WHERE repository_location_id=$1 AND last_seen_at < (SELECT started_at FROM indexing_runs WHERE id=$2)

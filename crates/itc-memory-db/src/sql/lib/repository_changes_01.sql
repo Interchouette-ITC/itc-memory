@@ -1,0 +1,1 @@
+SELECT r.display_name repository,l.root_path,c.path,c.status_text,c.is_staged,c.is_unstaged,c.is_untracked FROM repository_changes c JOIN repository_locations l ON l.id=c.repository_location_id JOIN repositories r ON r.id=l.repository_id JOIN projects p ON p.id=r.project_id WHERE l.is_present AND ($1::text IS NULL OR p.slug=$1) ORDER BY r.display_name,l.root_path,c.path

@@ -1,0 +1,1 @@
+INSERT INTO phases (id,plan_id,ordinal,title,status,source_line) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (plan_id,ordinal) DO UPDATE SET title=EXCLUDED.title,status=EXCLUDED.status,source_line=EXCLUDED.source_line,updated_at=now() RETURNING id

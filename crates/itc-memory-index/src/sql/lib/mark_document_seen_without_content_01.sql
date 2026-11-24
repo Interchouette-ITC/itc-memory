@@ -1,0 +1,1 @@
+UPDATE source_documents SET byte_size=$3,mtime_ns=$4,last_seen_at=now(),is_current=true,freshness_status=CASE WHEN $5='current' THEN 'stale' ELSE $5 END,symbols_indexed=false,superseded_by_document_id=NULL,duplicate_of_document_id=NULL WHERE repository_location_id=$1 AND path=$2 RETURNING id

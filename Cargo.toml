@@ -1,0 +1,40 @@
+[workspace]
+members = ["crates/itc-memory-core", "crates/itc-memory-db", "crates/itc-memory-index", "crates/itc-memory-model", "crates/itc-memory-cli", "crates/itc-memory-mcp"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+rust-version = "1.100"
+
+[workspace.dependencies]
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+dotenvy = "0.15"
+sqlx = { version = "0.8", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio-rustls", "uuid"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+syn = { version = "2", features = ["full", "visit"] }
+http = "1"
+nix = { version = "0.31", features = ["process", "signal"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rmcp = { version = "3.11.0", default-features = false, features = ["macros", "server", "transport-io", "transport-streamable-http-server"] }
+subtle = "2"
+
+[workspace.lints.rust]
+missing_docs = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }

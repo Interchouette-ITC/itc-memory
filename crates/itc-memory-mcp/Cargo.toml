@@ -1,0 +1,36 @@
+[package]
+name = "itc-memory-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "itc-memory-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+itc-memory-core = { path = "../itc-memory-core" }
+itc-memory-db = { path = "../itc-memory-db" }
+itc-memory-index = { path = "../itc-memory-index" }
+itc-memory-model = { path = "../itc-memory-model" }
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+subtle.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http.workspace = true
+rmcp = { workspace = true, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
+tokio = { workspace = true, features = ["process", "time"] }
+
+[lints]
+workspace = true

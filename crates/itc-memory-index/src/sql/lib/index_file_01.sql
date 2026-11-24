@@ -1,0 +1,1 @@
+SELECT d.byte_size,d.mtime_ns,v.content_hash,d.symbols_indexed, EXISTS(SELECT 1 FROM document_chunks c JOIN document_revisions r ON r.id=c.document_revision_id WHERE r.source_document_id=d.id AND r.is_current) FROM source_documents d LEFT JOIN document_revisions v ON v.source_document_id=d.id AND v.is_current WHERE d.repository_location_id=$1 AND d.path=$2

@@ -1,0 +1,1 @@
+SELECT t.id::text task_id,t.title task_title,r.reference_kind,r.reference,r.title,r.url,repo.display_name repository FROM task_references r JOIN tasks t ON t.id=r.task_id LEFT JOIN repositories repo ON repo.id=r.repository_id WHERE t.id=$1 AND r.reference_kind=$2 AND r.reference=$3

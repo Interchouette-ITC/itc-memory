@@ -1,0 +1,1 @@
+INSERT INTO branches (id,repository_id,name,head_sha,is_current,last_seen_at) VALUES ($1,$2,$3,$4,true,now()) ON CONFLICT (repository_id,name) DO UPDATE SET head_sha=EXCLUDED.head_sha,last_seen_at=now()

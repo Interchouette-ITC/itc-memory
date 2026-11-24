@@ -1,0 +1,1 @@
+SELECT root_path,status,started_at::text,finished_at::text,discovered_count,indexed_count,failed_count,configuration,COALESCE(error_summary,(SELECT string_agg(f.message,'; ') FROM indexing_failures f WHERE f.indexing_run_id=indexing_runs.id)) error_summary FROM indexing_runs ORDER BY started_at DESC LIMIT $1

@@ -1,0 +1,1 @@
+INSERT INTO plans (id,project_id,source_document_id,source_revision_id,title,status,is_current) VALUES ($1,$2,$3,$4,$5,'active',true) ON CONFLICT (source_document_id) WHERE source_document_id IS NOT NULL DO UPDATE SET source_revision_id=EXCLUDED.source_revision_id,title=EXCLUDED.title,status='active',is_current=true,updated_at=now() RETURNING id
