@@ -5,21 +5,28 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use itc_memory_core::DatabaseConfig;
+use itc_memory_index::rust_review::{self, LintResult, ReviewScope, ReviewSource};
 use itc_memory_model::{
     Availability, ExplicitModelRequest, InferenceAttempt, ModelCall, ModelCard, ModelRegistry,
-    ModelTaskProfile, operator_allows_hosted_from_environment,
+    ModelTaskProfile, RoutedInference, operator_allows_hosted_from_environment,
 };
 use serde::Serialize;
+use tokio_util::sync::CancellationToken;
 
 /// Local-first project intelligence.
 #[derive(Debug, Parser)]
-#[command(name = "itc-memory", version, about)]
+#[command(
+    name = "itc-memory",
+    version,
+    about,
+    after_help = "Use `itc-memory <command> --help` for details. Find project slugs with `itc-memory project list --json`. Use --json for structured output where available."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
 }
 
-/// Commands available before indexing is introduced.
+/// CLI operations.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Operate on the canonical PostgreSQL schema.
@@ -120,6 +127,67 @@ enum Command {
         #[arg(long, default_value_t = 12)]
         limit: i64,
     },
+    /// Find exact indexed lines or matching file paths.
+    SearchFiles {
+        query: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long, value_enum)]
+        freshness: Option<FreshnessArg>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+    },
+    /// Search Rust symbols, Cargo dependencies, and indexed text together.
+    SearchCode {
+        /// Symbol name, dependency name, or indexed text query.
+        query: String,
+        /// Restrict results to this project slug.
+        #[arg(long)]
+        project: Option<String>,
+        /// Maximum results per group, from 1 through 100.
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+        /// Return structured JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run Clippy on an indexed Rust checkout.
+    LintRust {
+        /// Project slug from `project list`.
+        project: String,
+        /// Absolute path of an indexed checkout belonging to the project.
+        #[arg(long)]
+        root_path: PathBuf,
+        /// Return diagnostics as JSON, including when Clippy fails.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Review selected Rust files or current changes using the configured review model.
+    ReviewRust {
+        /// Project slug from `project list`.
+        project: String,
+        /// Absolute path of an indexed checkout belonging to the project.
+        #[arg(long)]
+        root_path: PathBuf,
+        /// Repository-relative Rust file; repeat to review multiple files.
+        #[arg(
+            long = "file",
+            required_unless_present = "changed",
+            conflicts_with = "changed"
+        )]
+        files: Vec<String>,
+        /// Review staged, unstaged, and untracked Rust changes.
+        #[arg(long, conflicts_with = "files")]
+        changed: bool,
+        /// Permit hosted inference when the operator also allows it.
+        #[arg(long)]
+        allow_hosted: bool,
+        /// Return structured JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Build a compact, source-backed context pack for a task.
     Context {
         #[command(subcommand)]
@@ -167,12 +235,31 @@ enum IndexCommand {
 
 #[derive(Debug, Subcommand)]
 enum ProjectCommand {
+    /// List indexed projects, optionally filtering by slug and limiting results.
     List {
+        /// Only include this project slug.
+        #[arg(long)]
+        project: Option<String>,
+        /// Maximum number of projects to return.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Return structured JSON.
         #[arg(long)]
         json: bool,
     },
+    /// List repository locations for one indexed project.
     Inspect {
+        /// Project slug from `project list`.
         project: String,
+        /// Return structured JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Retrieve a combined project overview, plan, decisions, and checkpoints.
+    Context {
+        /// Project slug from `project list`.
+        project: String,
+        /// Return structured JSON.
         #[arg(long)]
         json: bool,
     },
@@ -180,6 +267,7 @@ enum ProjectCommand {
 
 #[derive(Debug, Subcommand)]
 enum RepoCommand {
+    /// List indexed repositories, optionally filtering by project and dirty state.
     List {
         #[arg(long)]
         project: Option<String>,
@@ -190,11 +278,13 @@ enum RepoCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect a repository by name, root path, or remote.
     Inspect {
         repository: String,
         #[arg(long)]
         json: bool,
     },
+    /// List indexed local worktree changes.
     Changes {
         #[arg(long)]
         project: Option<String>,
@@ -205,6 +295,7 @@ enum RepoCommand {
 
 #[derive(Debug, Subcommand)]
 enum PlanCommand {
+    /// Retrieve the current indexed plan for a project.
     Current {
         project: String,
         #[arg(long)]
@@ -223,6 +314,7 @@ enum PlanCommand {
 
 #[derive(Debug, Subcommand)]
 enum TaskCommand {
+    /// Create a project task.
     Add {
         project: String,
         title: String,
@@ -234,11 +326,13 @@ enum TaskCommand {
         #[arg(long)]
         json: bool,
     },
+    /// List project tasks.
     List {
         project: String,
         #[arg(long)]
         json: bool,
     },
+    /// Change a task's status.
     Update {
         task_id: uuid::Uuid,
         #[arg(long, value_enum)]
@@ -246,10 +340,12 @@ enum TaskCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Set the focused task for a project.
     Focus {
         project: String,
         task_id: uuid::Uuid,
     },
+    /// Link a commit, pull request, or implementation reference to a task.
     Link {
         task_id: uuid::Uuid,
         #[arg(long, value_enum)]
@@ -268,6 +364,7 @@ enum TaskCommand {
 
 #[derive(Debug, Subcommand)]
 enum WorkflowCommand {
+    /// Retrieve combined workflow state for an agent handoff.
     State {
         project: String,
         #[arg(long)]
@@ -277,6 +374,7 @@ enum WorkflowCommand {
 
 #[derive(Debug, Subcommand)]
 enum CheckpointCommand {
+    /// Record a project checkpoint and repository snapshot.
     Record {
         project: String,
         #[arg(long)]
@@ -291,11 +389,15 @@ enum CheckpointCommand {
         task_id: Option<uuid::Uuid>,
         #[arg(long)]
         session_id: Option<uuid::Uuid>,
+        /// Return the checkpoint identifier as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
 #[derive(Debug, Subcommand)]
 enum DecisionCommand {
+    /// Record a project decision and optional source.
     Record {
         project: String,
         #[arg(long)]
@@ -306,11 +408,15 @@ enum DecisionCommand {
         source_path: Option<String>,
         #[arg(long)]
         supersedes: Option<uuid::Uuid>,
+        /// Return the decision identifier as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
 #[derive(Debug, Subcommand)]
 enum SessionCommand {
+    /// Start a project session.
     Start {
         project: String,
         #[arg(long, default_value = "agent")]
@@ -318,6 +424,7 @@ enum SessionCommand {
         #[arg(long)]
         task_id: Option<uuid::Uuid>,
     },
+    /// Finish an existing session.
     Finish {
         session_id: uuid::Uuid,
         #[arg(long)]
@@ -367,10 +474,14 @@ impl TaskReferenceKindArg {
 
 #[derive(Debug, Subcommand)]
 enum ContextCommand {
+    /// Build a relevance-ranked, byte-bounded context pack for a task.
     Build {
+        /// Project slug from `project list`.
         project: String,
+        /// Task or question used to select relevant context.
         #[arg(long)]
         task: String,
+        /// Return structured JSON.
         #[arg(long)]
         json: bool,
         /// Maximum bytes of source excerpts to include.
@@ -398,17 +509,38 @@ enum ModelCommand {
     },
     /// Route a prompt through a task profile, with an optional catalog model override.
     Run {
+        /// Task profile, such as ask-explainer or architecture-analyst.
         #[arg(long, default_value = "ask-explainer")]
         profile: String,
+        /// Prompt to send to the model.
         prompt: String,
+        /// Add indexed context from this project slug.
         #[arg(long)]
         project: Option<String>,
+        /// Override the profile's model with a catalog model ID.
         #[arg(long)]
         model_id: Option<String>,
+        /// Additional context to send with the prompt.
         #[arg(long)]
         context: Option<String>,
+        /// Permit hosted inference when the operator also allows it.
         #[arg(long)]
         allow_hosted: bool,
+        /// Return structured JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Suggest focused tests for supplied code using the test-designer profile.
+    GenerateTests {
+        /// Source code to analyze.
+        code: String,
+        /// Add indexed context from this project slug.
+        #[arg(long)]
+        project: Option<String>,
+        /// Permit hosted inference when the operator also allows it.
+        #[arg(long)]
+        allow_hosted: bool,
+        /// Return structured JSON.
         #[arg(long)]
         json: bool,
     },
@@ -549,9 +681,25 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Project {
-            command: ProjectCommand::List { json },
+            command:
+                ProjectCommand::List {
+                    project,
+                    limit,
+                    json,
+                },
         } => {
-            let results = itc_memory_db::projects(&pool).await?;
+            if let Some(limit) = limit {
+                anyhow::ensure!(
+                    (1..=100).contains(&limit),
+                    "limit must be from 1 through 100"
+                );
+            }
+            let results = itc_memory_db::projects(&pool)
+                .await?
+                .into_iter()
+                .filter(|item| project.as_ref().is_none_or(|slug| item.slug == *slug))
+                .take(limit.unwrap_or(usize::MAX))
+                .collect::<Vec<_>>();
             print_projects(&results, json)?;
         }
         Command::Project {
@@ -580,6 +728,48 @@ async fn main() -> anyhow::Result<()> {
                         result.is_dirty,
                         result.root_path
                     );
+                }
+            }
+        }
+        Command::Project {
+            command: ProjectCommand::Context { project, json },
+        } => {
+            let roots = configured_root_strings(config_dir.as_deref())?;
+            let summary = itc_memory_db::projects_under_roots(&pool, &roots)
+                .await?
+                .into_iter()
+                .find(|item| item.slug == project)
+                .with_context(|| {
+                    format!("project {project:?} is not available in configured checkouts")
+                })?;
+            let (repositories, plan, decisions, checkpoints) = tokio::try_join!(
+                itc_memory_db::repositories_under_roots(&pool, Some(&project), None, &roots),
+                itc_memory_db::current_plan_under_roots(&pool, &project, &roots),
+                itc_memory_db::decisions_under_roots(&pool, &project, 20, &roots),
+                itc_memory_db::checkpoints(&pool, &project, 5),
+            )?;
+            let context = ProjectContext {
+                project: summary,
+                repositories,
+                plan,
+                decisions,
+                checkpoints: checkpoints.into_iter().map(Into::into).collect(),
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&context)?);
+            } else {
+                println!(
+                    "Project: {} ({})",
+                    context.project.display_name, context.project.slug
+                );
+                print_repositories(&context.repositories, false)?;
+                println!("Plans:");
+                print_results(&context.plan, false)?;
+                for decision in &context.decisions {
+                    println!("Decision: {} - {}", decision.title, decision.rationale);
+                }
+                for checkpoint in &context.checkpoints {
+                    println!("Checkpoint: {} - {}", checkpoint.title, checkpoint.summary);
                 }
             }
         }
@@ -657,6 +847,203 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
             print_results(&results, json)?;
+        }
+        Command::SearchFiles {
+            query,
+            project,
+            freshness,
+            json,
+            limit,
+        } => {
+            anyhow::ensure!(!query.trim().is_empty(), "query cannot be empty");
+            anyhow::ensure!(
+                !query.contains(['\n', '\r']),
+                "search-files requires a single-line literal query"
+            );
+            anyhow::ensure!(
+                (1..=100).contains(&limit),
+                "limit must be from 1 through 100"
+            );
+            let roots = configured_root_strings(config_dir.as_deref())?;
+            let results = itc_memory_db::search_file_lines_under_roots(
+                &pool,
+                &query,
+                project.as_deref(),
+                freshness.map(FreshnessArg::as_str),
+                limit,
+                &roots,
+            )
+            .await?;
+            anyhow::ensure!(
+                results
+                    .iter()
+                    .filter_map(|result| result.line.as_ref())
+                    .map(String::len)
+                    .sum::<usize>()
+                    <= 100_000,
+                "exact matches exceed the response size limit; narrow the query or limit"
+            );
+            if json {
+                println!("{}", serde_json::to_string_pretty(&results)?);
+            } else {
+                for result in results {
+                    if let Some(line) = result.line_number {
+                        let text = result.line.as_deref().context("matched line is missing")?;
+                        println!("{}:{}:{}  {}", result.root_path, result.path, line, text);
+                    } else {
+                        println!("{}/{}", result.root_path, result.path);
+                    }
+                }
+            }
+        }
+        Command::SearchCode {
+            query,
+            project,
+            limit,
+            json,
+        } => {
+            anyhow::ensure!(!query.trim().is_empty(), "query cannot be empty");
+            anyhow::ensure!(
+                (1..=100).contains(&limit),
+                "limit must be from 1 through 100"
+            );
+            let roots = configured_root_strings(config_dir.as_deref())?;
+            let (symbols, dependencies, indexed_matches) = tokio::try_join!(
+                itc_memory_db::search_symbols_under_roots(
+                    &pool,
+                    &query,
+                    project.as_deref(),
+                    limit,
+                    &roots
+                ),
+                itc_memory_db::search_dependencies_under_roots(
+                    &pool,
+                    &query,
+                    project.as_deref(),
+                    limit,
+                    &roots
+                ),
+                itc_memory_db::search_under_roots(
+                    &pool,
+                    &query,
+                    project.as_deref(),
+                    Some("current"),
+                    limit,
+                    &roots
+                ),
+            )?;
+            let results = CodeSearchResults {
+                symbols,
+                dependencies,
+                indexed_matches,
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&results)?);
+            } else {
+                for symbol in &results.symbols {
+                    println!(
+                        "Symbol: {}  {}:{}",
+                        symbol.qualified_name, symbol.path, symbol.line_number
+                    );
+                }
+                for dependency in &results.dependencies {
+                    println!(
+                        "Dependency: {} {}  {}",
+                        dependency.dependency_name, dependency.requirement, dependency.root_path
+                    );
+                }
+                print_results(&results.indexed_matches, false)?;
+            }
+        }
+        Command::LintRust {
+            project,
+            root_path,
+            json,
+        } => {
+            let root = indexed_checkout(&pool, &project, root_path).await?;
+            let lint = rust_review::lint(&root, &CancellationToken::new()).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&lint)?);
+            } else {
+                println!(
+                    "Clippy success={} exit_code={:?}",
+                    lint.success, lint.exit_code
+                );
+                for diagnostic in &lint.diagnostics {
+                    if let Some(rendered) =
+                        diagnostic.get("rendered").and_then(|value| value.as_str())
+                    {
+                        print!("{rendered}");
+                    } else {
+                        println!("{}", serde_json::to_string(diagnostic)?);
+                    }
+                }
+                if !lint.stderr.is_empty() {
+                    eprint!("{}", lint.stderr);
+                }
+            }
+            anyhow::ensure!(lint.success, "Clippy failed");
+        }
+        Command::ReviewRust {
+            project,
+            root_path,
+            files,
+            changed,
+            allow_hosted,
+            json,
+        } => {
+            let root = indexed_checkout(&pool, &project, root_path).await?;
+            let scope = if changed {
+                ReviewScope::Changed
+            } else {
+                ReviewScope::Files
+            };
+            let selected_files = (!changed).then_some(files.as_slice());
+            let prepared = rust_review::prepare_review(
+                &root,
+                scope,
+                selected_files,
+                &CancellationToken::new(),
+            )
+            .await?;
+            let registry = ModelRegistry::from_environment_in(config_dir.as_deref())?;
+            let operator_allows_hosted =
+                operator_allows_hosted_from_environment().map_err(anyhow::Error::msg)?;
+            let context = model_context(
+                &pool,
+                Some(&project),
+                "Rust review and relevant code conventions",
+                None,
+            )
+            .await?;
+            let routed = registry
+                .run_profile(
+                    "rust-reviewer",
+                    None,
+                    &prepared.prompt,
+                    context.as_deref(),
+                    allow_hosted,
+                    operator_allows_hosted,
+                )
+                .await;
+            record_model_attempts(&pool, &routed.attempts).await?;
+            let result = routed.result?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&RustReviewOutput {
+                        source: &prepared.source,
+                        lint: &prepared.lint,
+                        review: ModelRunOutput {
+                            result: &result,
+                            attempts: &routed.attempts,
+                        },
+                    })?
+                );
+            } else {
+                println!("Clippy success: {}", prepared.lint.success);
+                println!("{}", result.response);
+            }
         }
         Command::Symbols {
             query,
@@ -833,6 +1220,7 @@ async fn main() -> anyhow::Result<()> {
                     blockers,
                     task_id,
                     session_id,
+                    json,
                 },
         } => {
             let id = itc_memory_db::record_checkpoint(
@@ -848,7 +1236,11 @@ async fn main() -> anyhow::Result<()> {
                 },
             )
             .await?;
-            println!("Recorded checkpoint {id} for {project}.");
+            if json {
+                println!("{}", serde_json::json!({ "checkpoint_id": id }));
+            } else {
+                println!("Recorded checkpoint {id} for {project}.");
+            }
         }
         Command::Decision {
             command:
@@ -858,6 +1250,7 @@ async fn main() -> anyhow::Result<()> {
                     rationale,
                     source_path,
                     supersedes,
+                    json,
                 },
         } => {
             let id = itc_memory_db::record_decision(
@@ -869,7 +1262,11 @@ async fn main() -> anyhow::Result<()> {
                 supersedes,
             )
             .await?;
-            println!("Recorded validated decision {id} for {project}.");
+            if json {
+                println!("{}", serde_json::json!({ "decision_id": id }));
+            } else {
+                println!("Recorded validated decision {id} for {project}.");
+            }
         }
         Command::Session {
             command:
@@ -1075,48 +1472,40 @@ async fn main() -> anyhow::Result<()> {
                     )
                     .await;
                 record_model_attempts(&pool, &routed.attempts).await?;
-                match routed.result {
-                    Ok(result) => {
-                        if json {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&ModelRunOutput {
-                                    result: &result,
-                                    attempts: &routed.attempts,
-                                })?
-                            );
-                        } else {
-                            println!(
-                                "model={} profile={} fallback={} latency_ms={} input_tokens={} output_tokens={}",
-                                result.model_id,
-                                result.task_profile_id.as_deref().unwrap_or("none"),
-                                result.attempt.fallback_used,
-                                result.attempt.latency_ms,
-                                result.attempt.input_tokens.map_or_else(
-                                    || "unknown".to_owned(),
-                                    |value| value.to_string()
-                                ),
-                                result.attempt.output_tokens.map_or_else(
-                                    || "unknown".to_owned(),
-                                    |value| value.to_string()
-                                )
-                            );
-                            println!("{}", result.response);
-                        }
-                    }
-                    Err(error) => {
-                        if json {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&serde_json::json!({
-                                    "error": error.to_string(),
-                                    "attempts": routed.attempts
-                                }))?
-                            );
-                        }
-                        return Err(error.into());
-                    }
-                }
+                print_model_run(routed, json)?;
+            }
+            ModelCommand::GenerateTests {
+                code,
+                project,
+                allow_hosted,
+                json,
+            } => {
+                anyhow::ensure!(!code.trim().is_empty(), "code cannot be empty");
+                let registry = ModelRegistry::from_environment_in(config_dir.as_deref())?;
+                let operator_allows_hosted =
+                    operator_allows_hosted_from_environment().map_err(anyhow::Error::msg)?;
+                let context = model_context(
+                    &pool,
+                    project.as_deref(),
+                    "test conventions and coverage for this source",
+                    None,
+                )
+                .await?;
+                let prompt = format!(
+                    "Suggest focused tests for this code. Do not claim they were run:\n```\n{code}\n```"
+                );
+                let routed = registry
+                    .run_profile(
+                        "test-designer",
+                        None,
+                        &prompt,
+                        context.as_deref(),
+                        allow_hosted,
+                        operator_allows_hosted,
+                    )
+                    .await;
+                record_model_attempts(&pool, &routed.attempts).await?;
+                print_model_run(routed, json)?;
             }
             ModelCommand::Compare {
                 first_model_id,
@@ -1207,6 +1596,47 @@ async fn main() -> anyhow::Result<()> {
 }
 
 #[derive(Serialize)]
+struct ProjectContext {
+    project: itc_memory_db::ProjectSummary,
+    repositories: Vec<itc_memory_db::RepositorySummary>,
+    plan: Vec<itc_memory_db::SearchResult>,
+    decisions: Vec<itc_memory_db::DecisionResult>,
+    checkpoints: Vec<ContextCheckpoint>,
+}
+
+#[derive(Serialize)]
+struct ContextCheckpoint {
+    title: String,
+    summary: String,
+    next_steps: String,
+    blockers: String,
+    created_at: String,
+    task_id: Option<String>,
+    session_id: Option<String>,
+}
+
+impl From<itc_memory_db::CheckpointResult> for ContextCheckpoint {
+    fn from(checkpoint: itc_memory_db::CheckpointResult) -> Self {
+        Self {
+            title: checkpoint.title,
+            summary: checkpoint.summary,
+            next_steps: checkpoint.next_steps,
+            blockers: checkpoint.blockers,
+            created_at: checkpoint.created_at,
+            task_id: checkpoint.task_id,
+            session_id: checkpoint.session_id,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct CodeSearchResults {
+    symbols: Vec<itc_memory_db::SymbolResult>,
+    dependencies: Vec<itc_memory_db::DependencyResult>,
+    indexed_matches: Vec<itc_memory_db::SearchResult>,
+}
+
+#[derive(Serialize)]
 struct ModelCatalogOutput<'a> {
     models: &'a [ModelCard],
     task_profiles: &'a [ModelTaskProfile],
@@ -1224,6 +1654,13 @@ struct ModelProfileOutput<'a> {
 struct ModelRunOutput<'a> {
     result: &'a itc_memory_model::InferenceResult,
     attempts: &'a [InferenceAttempt],
+}
+
+#[derive(Serialize)]
+struct RustReviewOutput<'a> {
+    source: &'a ReviewSource,
+    lint: &'a LintResult,
+    review: ModelRunOutput<'a>,
 }
 
 #[derive(Serialize)]
@@ -1322,6 +1759,52 @@ fn comparison_entry(model_id: String, call: ModelCall) -> ModelComparisonEntry {
             attempt,
         },
     }
+}
+
+fn print_model_run(routed: RoutedInference, json: bool) -> anyhow::Result<()> {
+    match routed.result {
+        Ok(result) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&ModelRunOutput {
+                        result: &result,
+                        attempts: &routed.attempts,
+                    })?
+                );
+            } else {
+                println!(
+                    "model={} profile={} fallback={} latency_ms={} input_tokens={} output_tokens={}",
+                    result.model_id,
+                    result.task_profile_id.as_deref().unwrap_or("none"),
+                    result.attempt.fallback_used,
+                    result.attempt.latency_ms,
+                    result
+                        .attempt
+                        .input_tokens
+                        .map_or_else(|| "unknown".to_owned(), |value| value.to_string()),
+                    result
+                        .attempt
+                        .output_tokens
+                        .map_or_else(|| "unknown".to_owned(), |value| value.to_string())
+                );
+                println!("{}", result.response);
+            }
+        }
+        Err(error) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "error": error.to_string(),
+                        "attempts": routed.attempts
+                    }))?
+                );
+            }
+            return Err(error.into());
+        }
+    }
+    Ok(())
 }
 
 fn print_comparison_entry(entry: &ModelComparisonEntry) {
@@ -1580,6 +2063,26 @@ fn print_results(results: &[itc_memory_db::SearchResult], json: bool) -> anyhow:
     Ok(())
 }
 
+async fn indexed_checkout(
+    pool: &sqlx::PgPool,
+    project: &str,
+    root_path: PathBuf,
+) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(!project.trim().is_empty(), "project cannot be empty");
+    let root = validate_repository_roots(vec![root_path])?
+        .into_iter()
+        .next()
+        .context("missing checkout root")?;
+    let repositories = itc_memory_db::repositories(pool, Some(project), None).await?;
+    anyhow::ensure!(
+        repositories
+            .iter()
+            .any(|repository| Path::new(&repository.root_path) == root),
+        "root_path is not an indexed checkout of the requested project"
+    );
+    Ok(root)
+}
+
 fn configured_roots(config_dir: Option<&Path>) -> anyhow::Result<Vec<PathBuf>> {
     match std::env::var("ITC_MEMORY_INDEX_ROOTS_FILE") {
         Ok(path) => {
@@ -1588,6 +2091,7 @@ fn configured_roots(config_dir: Option<&Path>) -> anyhow::Result<Vec<PathBuf>> {
                 .with_context(|| format!("read configured index roots file {}", path.display()))?;
             return parse_root_file(&contents);
         }
+
         Err(std::env::VarError::NotPresent) => {}
         Err(error) => return Err(error.into()),
     }
@@ -1606,6 +2110,13 @@ fn configured_roots(config_dir: Option<&Path>) -> anyhow::Result<Vec<PathBuf>> {
         Err(error) => return Err(error.into()),
     };
     parse_configured_roots(&configured)
+}
+
+fn configured_root_strings(config_dir: Option<&Path>) -> anyhow::Result<Vec<String>> {
+    Ok(configured_roots(config_dir)?
+        .into_iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect())
 }
 
 fn parse_root_file(contents: &str) -> anyhow::Result<Vec<PathBuf>> {
@@ -1664,8 +2175,47 @@ fn validate_repository_roots(roots: Vec<PathBuf>) -> anyhow::Result<Vec<PathBuf>
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_configured_roots, parse_root_file};
+    use super::{Cli, parse_configured_roots, parse_root_file};
+    use clap::{CommandFactory, Parser};
     use std::{fs, time::SystemTime};
+
+    #[test]
+    fn every_command_has_discoverable_help() {
+        fn check(command: &clap::Command, path: &str) {
+            for subcommand in command.get_subcommands() {
+                let full_path = format!("{path} {}", subcommand.get_name());
+                assert!(
+                    subcommand
+                        .get_about()
+                        .is_some_and(|about| !about.to_string().trim().is_empty()),
+                    "{full_path} has no help description"
+                );
+                check(subcommand, &full_path);
+            }
+        }
+        check(&Cli::command(), "itc-memory");
+    }
+
+    #[test]
+    fn rust_review_requires_a_single_source_scope() {
+        let base = [
+            "itc-memory",
+            "review-rust",
+            "project",
+            "--root-path",
+            "/repo",
+        ];
+        assert!(Cli::try_parse_from(base).is_err());
+        assert!(Cli::try_parse_from(base.into_iter().chain(["--changed"])).is_ok());
+        assert!(Cli::try_parse_from(base.into_iter().chain(["--file", "src/lib.rs"])).is_ok());
+        assert!(
+            Cli::try_parse_from(
+                base.into_iter()
+                    .chain(["--changed", "--file", "src/lib.rs"])
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn configured_roots_accept_only_explicit_checkout_folders() {

@@ -14,7 +14,7 @@
       "display_name": "Test model",
       "provider": "local",
       "model_identifier": "test:latest",
-      "supported_task_profiles": ["rust-reviewer"],
+      "supported_task_profiles": ["rust-reviewer", "test-designer"],
       "capabilities": ["chat", "code"],
       "known_limitations": []
     }
@@ -25,6 +25,14 @@
       "display_name": "Rust reviewer",
       "responsibility": "Review Rust code",
       "instructions": "Review the supplied code.",
+      "preferred_model_id": "test-model",
+      "fallback_model_ids": []
+    },
+    {
+      "id": "test-designer",
+      "display_name": "Test designer",
+      "responsibility": "Suggest focused tests",
+      "instructions": "Suggest tests for the supplied code.",
       "preferred_model_id": "test-model",
       "fallback_model_ids": []
     }

@@ -36,7 +36,7 @@ pub fn load_environment() -> Result<Option<PathBuf>, dotenvy::Error> {
     Ok(path.parent().map(Path::to_path_buf))
 }
 
-/// Optional local exact-checkout allowlist, compiled into the CLI and MCP binaries.
+/// Optional local exact-checkout allowlist used by the CLI.
 pub const EMBEDDED_INDEX_ROOTS: &str = include_str!(concat!(env!("OUT_DIR"), "/index-roots.txt"));
 
 /// Resolve a configuration file path relative to the loaded `.env`, if any.

@@ -15,16 +15,18 @@ The initial configuration is intentionally local and single-machine. PostgreSQL 
 ## Application boundaries
 
 ```text
-CLI / stdio MCP / Streamable HTTP MCP
-                 |
-           application services
+IDE agent -- MCP CLI discovery
+     |
+    CLI
+     |
+application services
        /         |          \\
 discovery    workflow     retrieval
        \\         |          /
              PostgreSQL
 ```
 
-The Rust application owns all business logic. CLI and MCP transports are thin adapters over the same services. Search, filesystem discovery, Git inspection, symbol extraction, and linting are deterministic tools. The MCP `lint_rust` tool runs Clippy; `review_rust` runs the same check before delegating the selected source and diagnostics to a model. Clippy can execute project build code and is not sandboxed; see [MCP setup and security](mcp.md). Registered local models can interpret results through bounded inference profiles, but do not replace deterministic tools or autonomously modify source files.
+The Rust application owns business logic and the CLI is its primary interface. MCP exposes CLI help, not a duplicate set of operation schemas. Search, filesystem discovery, Git inspection, symbol extraction, and linting are deterministic. CLI `lint-rust` runs Clippy; `review-rust` runs the same check before delegating selected source and diagnostics to a model. Clippy can execute project build code and is not sandboxed; see [MCP setup](mcp.md). Registered local models can interpret results through bounded inference profiles, but do not replace deterministic tools or autonomously modify source files.
 
 ## Repository identity and local discovery
 
@@ -62,6 +64,6 @@ The Cargo workspace has six crates: `itc-memory-core`, `itc-memory-db`, `itc-mem
 - PostgreSQL in Docker is selected; SQLite is rejected because structured memory is intended to be shared across local tools and eventually machines.
 - A host bind mount is selected over a Docker-managed volume so data resides predictably under this project and can be backed up directly.
 - CLI is the first client; MCP is an integration layer, not an alternative application core.
-- Stdio and Streamable HTTP MCP are adapters over one service layer. Stdio is the local IDE default; HTTP currently binds only to loopback and uses a shared bearer token. A separate configurable client allowlist is not implemented.
+- Stdio and Streamable HTTP MCP expose the same CLI discovery tool. Stdio is the local IDE default; HTTP binds only to loopback and uses a shared bearer token.
 - Raw session transcript ingestion and generic autonomous agent frameworks are not foundations for the initial product.
 - GitHub/network indexing is not a substitute for local discovery; local uncommitted state must be visible.

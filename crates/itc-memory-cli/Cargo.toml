@@ -18,9 +18,14 @@ itc-memory-index = { path = "../itc-memory-index" }
 itc-memory-model = { path = "../itc-memory-model" }
 sqlx.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["process"] }
 
 [lints]
 workspace = true

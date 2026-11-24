@@ -6,7 +6,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${REPO_ROOT}"
-export ITC_MEMORY_MCP_ALLOW_WRITES="${ITC_MEMORY_MCP_ALLOW_WRITES:-false}"
 
 if [[ -x "${HOME}/.cargo/bin/itc-memory-mcp" ]]; then
   exec "${HOME}/.cargo/bin/itc-memory-mcp" --transport stdio "$@"

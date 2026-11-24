@@ -56,6 +56,74 @@ pub struct SourceFile {
     pub content: String,
 }
 
+/// How Rust review source is selected.
+#[derive(Clone, Copy, Debug)]
+pub enum ReviewScope {
+    /// Review the supplied repository-relative paths.
+    Files,
+    /// Review current staged, unstaged, and untracked changes.
+    Changed,
+}
+
+/// Source, diagnostics, and prompt prepared for a model-backed review.
+pub struct PreparedReview {
+    /// Selected source and optional diff.
+    pub source: ReviewSource,
+    /// Clippy output for the checkout.
+    pub lint: LintResult,
+    /// Review prompt containing the source and diagnostics.
+    pub prompt: String,
+}
+
+/// Collect review inputs and run Clippy before model inference.
+///
+/// # Errors
+/// Returns an error when selection, linting, or input limits fail.
+pub async fn prepare_review(
+    root: &Path,
+    scope: ReviewScope,
+    files: Option<&[String]>,
+    cancellation: &CancellationToken,
+) -> anyhow::Result<PreparedReview> {
+    let source = match scope {
+        ReviewScope::Files => explicit_files(
+            root,
+            files.ok_or_else(|| anyhow::anyhow!("files scope requires a files list"))?,
+        )?,
+        ReviewScope::Changed => {
+            if files.is_some() {
+                bail!("files are only valid with the files scope");
+            }
+            changed_files(root, cancellation).await?
+        }
+    };
+    let lint = lint(root, cancellation).await?;
+    if !lint.success && lint.diagnostics.is_empty() {
+        bail!(
+            "Clippy failed with exit code {:?} before producing diagnostics: {}",
+            lint.exit_code,
+            lint.stderr
+        );
+    }
+    let diagnostics = serde_json::to_string(&lint)?;
+    if diagnostics.len() > 20_000 {
+        bail!("Clippy diagnostics exceed the review input limit; inspect lint output separately");
+    }
+    let prompt = format!(
+        "Review the supplied Rust source and diff for actionable correctness defects. \
+         Cite file paths and line numbers, and reference relevant Clippy diagnostics. \
+         Distinguish lint diagnostics from your own findings. Clippy may have failed; \
+         do not claim a successful lint unless its success field is true.\n\
+         Source: {}\nClippy: {diagnostics}",
+        serde_json::to_string(&source)?
+    );
+    Ok(PreparedReview {
+        source,
+        lint,
+        prompt,
+    })
+}
+
 /// Runs Clippy for the checkout's Cargo workspace.
 ///
 /// # Errors
@@ -506,6 +574,17 @@ mod tests {
                 .diagnostics
                 .iter()
                 .any(|message| { message.get("level").and_then(Value::as_str) == Some("error") })
+        );
+        let files = vec!["src/lib.rs".to_owned()];
+        let prepared = prepare_review(&fixture.0, ReviewScope::Files, Some(&files), &token)
+            .await
+            .unwrap();
+        assert!(!prepared.lint.success);
+        assert!(prepared.prompt.contains("not a number"));
+        assert!(
+            prepare_review(&fixture.0, ReviewScope::Files, None, &token)
+                .await
+                .is_err()
         );
     }
 

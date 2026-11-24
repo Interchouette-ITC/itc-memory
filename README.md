@@ -15,9 +15,11 @@ Plans, tasks, decisions, and checkpoints can be used independently to maintain c
          \              |          |         /
           +-------------+----------+--------+
                          |
-                   Rust MCP server
+              MCP CLI discovery
                          |
-  Rust CLI ------ Rust application services
+                    Rust CLI
+                         |
+                 application services
                   /           |           \
              Search       Workflow     Model router
                   \           |           /
@@ -26,7 +28,7 @@ Plans, tasks, decisions, and checkpoints can be used independently to maintain c
                    Persistent host storage
 ```
 
-MCP is the integration layer; the CLI also works independently.
+MCP explains the CLI to agents; agents execute the CLI through the shell.
 
 ## Start the local database
 
@@ -41,16 +43,16 @@ See [the architecture](docs/architecture.md), [database operations](docs/databas
 
 ## Index and retrieve project context
 
-After configuring `.env` and applying migrations with `make db-migrate`, indexing uses the local `config/index-roots.txt` list if it was present at build time; otherwise it defaults to the current checkout. Override it with `ITC_MEMORY_INDEX_ROOTS_FILE` or a comma-separated `ITC_MEMORY_INDEX_ROOTS` list. Entries must be exact Git checkouts. Reinstall both binaries after changing the compiled list; see [MCP setup](docs/mcp.md).
+After configuring `.env` and applying migrations with `make db-migrate`, indexing uses the local `config/index-roots.txt` list if it was present at build time; otherwise it defaults to the current checkout. Override it with `ITC_MEMORY_INDEX_ROOTS_FILE` or a comma-separated `ITC_MEMORY_INDEX_ROOTS` list. Entries must be exact Git checkouts. Reinstall the CLI after changing the compiled list; see [MCP setup](docs/mcp.md).
 
 ```text
-cargo run -p itc-memory-cli -- index refresh
-cargo run -p itc-memory-cli -- index status
-cargo run -p itc-memory-cli -- search "database migration" --freshness current
-cargo run -p itc-memory-cli -- symbols "connect"
-cargo run -p itc-memory-cli -- dependencies "sqlx"
-cargo run -p itc-memory-cli -- repo changes
-cargo run -p itc-memory-cli -- context build https-github-com-interchouette-itc-itc-memory --task "Improve retrieval" --max-bytes 8000 --json
+itc-memory index refresh
+itc-memory index status
+itc-memory search "database migration" --freshness current
+itc-memory symbols "connect"
+itc-memory dependencies "sqlx"
+itc-memory repo changes
+itc-memory context build https-github-com-interchouette-itc-itc-memory --task "Improve retrieval" --max-bytes 8000 --json
 ```
 
 `--root` is a one-off override and must also name exact checkout folders. `index rescan` forces derived content and symbol rebuilding; ordinary refreshes remain incremental. Search, repository status, plans, decisions, checkpoints, and context packs also support structured JSON output.
@@ -60,17 +62,17 @@ cargo run -p itc-memory-cli -- context build https-github-com-interchouette-itc-
 Plan, Agent, and Ask are independent ways to use project memory, not steps in a required sequence. Task creation, decision recording, checkpoints, and session tracking can each be used on their own. `workflow state` combines the available structured data for an agent handoff; it does not ingest conversation transcripts.
 
 ```text
-cargo run -p itc-memory-cli -- workflow state https-github-com-interchouette-itc-itc-memory --json
-cargo run -p itc-memory-cli -- plan sync https-github-com-interchouette-itc-itc-memory --path ".cursor/plans/itc-memory — implementation roadmap.md"
-cargo run -p itc-memory-cli -- task add https-github-com-interchouette-itc-itc-memory "Verify retrieval behavior"
-cargo run -p itc-memory-cli -- task list https-github-com-interchouette-itc-itc-memory --json
-cargo run -p itc-memory-cli -- decision record https-github-com-interchouette-itc-itc-memory --title "Keep plans authoritative" --rationale "Plan files remain the source of truth."
-cargo run -p itc-memory-cli -- checkpoint record https-github-com-interchouette-itc-itc-memory --title "Indexing complete" --summary "The changed documents are indexed." --next-steps "Run the focused checks."
-cargo run -p itc-memory-cli -- context build https-github-com-interchouette-itc-itc-memory --task "How does indexing work?" --json
+itc-memory workflow state https-github-com-interchouette-itc-itc-memory --json
+itc-memory plan sync https-github-com-interchouette-itc-itc-memory --path ".cursor/plans/itc-memory — implementation roadmap.md"
+itc-memory task add https-github-com-interchouette-itc-itc-memory "Verify retrieval behavior"
+itc-memory task list https-github-com-interchouette-itc-itc-memory --json
+itc-memory decision record https-github-com-interchouette-itc-itc-memory --title "Keep plans authoritative" --rationale "Plan files remain the source of truth."
+itc-memory checkpoint record https-github-com-interchouette-itc-itc-memory --title "Indexing complete" --summary "The changed documents are indexed." --next-steps "Run the focused checks."
+itc-memory context build https-github-com-interchouette-itc-itc-memory --task "How does indexing work?" --json
 ```
 
 `plan sync` imports phase headings and Markdown checkboxes from a currently indexed plan without editing that file. Run it again after indexing plan changes; until then, `workflow state` reports the normalized plan as stale. Agents can independently create/update/focus tasks, attach commit or pull-request references, record validated decisions or checkpoints, and start/finish sessions. Checkpoints include the latest indexed repository state and local changes; `workflow state` reports changes observed since the newest checkpoint.
 
 ## MCP integrations
 
-The shared MCP server exposes the same indexed project services over stdio for IDEs and authenticated, loopback-only Streamable HTTP for a reverse-proxy deployment. See [MCP setup and security](docs/mcp.md) and the included [VS Code](.vscode/mcp.json) and [Cursor](.cursor/mcp.json) configurations.
+The MCP server exposes one CLI-discovery tool over stdio or authenticated, loopback-only Streamable HTTP. See [MCP setup](docs/mcp.md) and the included [VS Code](.vscode/mcp.json) and [Cursor](.cursor/mcp.json) configurations.
